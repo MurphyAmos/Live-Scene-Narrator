@@ -1,3 +1,4 @@
 opencv-python
 ultralytics
 google-genai
+pytest>=8.0
