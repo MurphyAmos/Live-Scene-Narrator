@@ -41,7 +41,7 @@ The detector output is never treated as ground truth on its own, it's noisy per-
 Install dependencies:
 
 ```
-pip install ultralytics opencv-python
+pip install -r requirements.txt
 ```
 
 Set the `GEMINI_API_KEY` environment variable to your Gemini API key before running the script.
