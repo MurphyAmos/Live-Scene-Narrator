@@ -14,7 +14,7 @@ Instead of reading raw bounding boxes, class labels, and confidence scores off a
 4. **Structured detection records.** For every detection above a confidence threshold (`0.2`), the script builds a JSON-serializable record: normalized center/box coordinates, corner coordinates, area, aspect ratio, and coarse horizontal/vertical region labels.
 5. **Batching.** Frame records accumulate in memory and are also appended to a `.jsonl` log file. Every 60 processed frames, the accumulated batch is flushed to the summary step and cleared.
 6. **LLM scene interpretation.** The batch is sent to a Gemini model with a detailed system prompt enforcing conservative, evidence-based interpretation, no inventing objects or actions, merging noisy or conflicting class labels into broader categories, inferring rough movement from position and box-size changes, and describing the scene in 2-5 casual sentences.
-7. **Output.** Each generated description is printed and appended to `Description.txt`, building up a running narrative of the session alongside the raw `demofile.jsonl` detection log.
+7. **Output.** Each generated description is printed and appended to `Description.txt`, building up a running narrative of the session alongside the raw `Video_Data.jsonl` detection log.
 8. **Preview.** A live annotated preview window shows the tracked/segmented feed; pressing `q` exits the loop and closes the window.
 
 # Temporal Scene-Description Design
@@ -44,8 +44,7 @@ Install dependencies:
 pip install ultralytics opencv-python
 ```
 
-Set your API key by replacing the placeholder wherever the `client` object used by `client.interactions.create` is initialized.
-
+Set the `GEMINI_API_KEY` environment variable to your Gemini API key before running the script
 Make sure a webcam is available at index `0`, or update `cv2.VideoCapture(0)` to the correct camera index.
 
 
