@@ -467,6 +467,6 @@ def get_frame_info():
                 camera.release()
                 cv2.destroyAllWindows() 
                 break
-get_frame_info()
-
+if __name__ == "__main__":
+    get_frame_info()
 
