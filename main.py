@@ -457,7 +457,11 @@ def get_frame_info():
                 f.write(json.dumps(frame_data) + "\n")
             if count % 60 == 0:
                 y = prompt_summary(frame_list).output_text
+                print("\n" + "=" * 50)
+                print("LIVE SCENE INTERPRETATION")
+                print("=" * 50)
                 print(y)
+                print()
                 with open("Description.txt", "a") as f:
                     f.write(y+"\n\n\n")
                 frame_list.clear()  
