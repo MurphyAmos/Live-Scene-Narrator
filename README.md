@@ -44,7 +44,7 @@ Install dependencies:
 pip install ultralytics opencv-python
 ```
 
-Set the `GEMINI_API_KEY` environment variable to your Gemini API key before running the script
+Set the `GEMINI_API_KEY` environment variable to your Gemini API key before running the script.
 Make sure a webcam is available at index `0`, or update `cv2.VideoCapture(0)` to the correct camera index.
 
 
