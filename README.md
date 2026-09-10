@@ -62,7 +62,7 @@ Then Run:
 python main.py
 ```
 
-Press `q` in the preview window to stop. Detection logs are written to `demofile.jsonl` and scene descriptions are appended to `Description.txt` as the session runs.
+Press `q` in the preview window to stop. Detection logs are written to `Video_Data.jsonl` and scene descriptions are appended to `Description.txt` as the session runs.
 
 ## Known limitations & Next Fixes
 - **Fixed batch size.** The 60-frame flush interval is a flat count, not time-based, so summary cadence shifts if processing speed varies.
