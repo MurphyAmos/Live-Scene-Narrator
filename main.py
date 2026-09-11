@@ -454,11 +454,14 @@ def get_frame_info():
                         }
                     }
                     frame_data["detections"].append(detect)
+            #load current frame_data line into list
             frame_list.append(frame_data)
+            #write current frame to jsaon file
             with open("Video_Data.jsonl", "a") as f:
                 f.write(json.dumps(frame_data) + "\n")
             if count % 60 == 0:
-                ##wait till theres "60"/fc frames in frame list. 
+                ##wait till theres "60"/fc frames in frame list.
+                #put last 60/fc frame meta data into model, if last frame input exist, use recent history as refrence for recent input 
                 y = prompt_summary(frame_list).output_text
                 print("\n" + "=" * 50)
                 print("LIVE SCENE INTERPRETATION")
