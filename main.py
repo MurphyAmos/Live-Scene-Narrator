@@ -375,14 +375,16 @@ def get_frame_info():
     fc = 2
     count,preview = 0, True
     frame_list = []
-
+    
     while True:
         count+=1
+        #skip frames until nth frame
         if count % fc != 0:
             success = camera.grab()
             if not success:
                 break
             continue
+        #process every nth frame
         success, frame = camera.read()
         #if we get a frame
         if success:
@@ -407,10 +409,10 @@ def get_frame_info():
                     #else take confidence the current ID the class and position and write it to jsonl file
                     x, y, w, h = result.boxes.xywhn[i].cpu().tolist()
                     x1, y1, x2, y2 = result.boxes.xyxyn[i].cpu().tolist()
-
+                    
                     area = w * h
                     aspect_ratio = w / h if h != 0 else 0
-
+                    #load frame metadata json struct into frame_data
                     detect = {
                         "track_id": (
                             int(result.boxes.id[i].item())
@@ -456,6 +458,7 @@ def get_frame_info():
             with open("Video_Data.jsonl", "a") as f:
                 f.write(json.dumps(frame_data) + "\n")
             if count % 60 == 0:
+                ##wait till theres "60"/fc frames in frame list. 
                 y = prompt_summary(frame_list).output_text
                 print("\n" + "=" * 50)
                 print("LIVE SCENE INTERPRETATION")
@@ -464,6 +467,7 @@ def get_frame_info():
                 print()
                 with open("Description.txt", "a") as f:
                     f.write(y+"\n\n\n")
+                #clear for next pass of 60 frames
                 frame_list.clear()  
         if preview:
             cv2.imshow("YOLOE Segmentation",results[0].plot())
