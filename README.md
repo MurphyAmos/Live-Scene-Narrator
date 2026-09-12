@@ -14,7 +14,7 @@ Instead of reading raw bounding boxes, class labels, and confidence scores off a
 4. **Structured detection records.** For every detection above a confidence threshold (`0.2`), the script builds a JSON-serializable record: normalized center/box coordinates, corner coordinates, area, aspect ratio, and coarse horizontal/vertical region labels.
 5. **Batching.** Frame records accumulate in memory and are also appended to a `.jsonl` log file. Every 60 processed frames, the accumulated batch is flushed to the summary step and cleared.
 6. **LLM scene interpretation.** The batch is sent to a Gemini model with a detailed system prompt enforcing conservative, evidence-based interpretation, no inventing objects or actions, merging noisy or conflicting class labels into broader categories, inferring rough movement from position and box-size changes, and describing the scene in 2-5 casual sentences.
-7. **Output.** Each generated description is printed and appended to `Description.txt`, building up a running narrative of the session alongside the raw `Video_Data.jsonl` detection log.
+7. **Output.** Each generated description is saved to the local vector database (`my_local_vectordb`) alongside the batch that produced it, and also becomes the `previous_scene_summary` fed into the next call, building up a running narrative of the session alongside the raw `Video_Data.jsonl` detection log.
 8. **Preview.** A live annotated preview window shows the tracked/segmented feed; pressing `q` exits the loop and closes the window.
 
 # Temporal Scene-Description Design
@@ -24,10 +24,9 @@ This project uses a lightweight streaming summarization workflow:
 - **Sample:** Grab frames from the live feed at a fixed sub-sampling rate and run detection/tracking on each one.
 - **Batch:** Accumulate a fixed window of frame observations before sending anything to the LLM.
 - **Interpret:** Prompt an LLM to reason over the batch as a temporal sequence, using object persistence, position, and box-size changes to infer movement.
-- **Chain:** Carry state forward via the previous interaction ID instead of re-sending prior summaries, so later batches update rather than restate the scene.
+- **Chain:** Carry state forward by passing the previous summary's text directly into the next prompt, so later batches update rather than restate the scene.
 
 The detector output is never treated as ground truth on its own, it's noisy per-frame evidence that the LLM step is explicitly instructed to merge, filter, and interpret conservatively.
-
 
 ## Tech stack
 
@@ -36,6 +35,7 @@ The detector output is never treated as ground truth on its own, it's noisy per-
 - YOLOE (Ultralytics) for object detection and tracking
 - Gemini API for temporal scene summarization
 - JSON / JSONL for structured detection logging
+
 ## Setup
 
 Install dependencies:
@@ -47,7 +47,6 @@ pip install -r requirements.txt
 Set the `GEMINI_API_KEY` environment variable to your Gemini API key before running the script.
 Make sure a webcam is available at index `0`, or update `cv2.VideoCapture(0)` to the correct camera index.
 
-
 ## Usage
 
 Update the following near the top of the script:
@@ -56,6 +55,7 @@ Update the following near the top of the script:
 - `fc` with the frame-subsampling factor inside `get_frame_info()`.
 - The batch flush interval if you want summaries more or less often.
 - The confidence threshold used to filter out low-confidence detections.
+
 Then Run:
 ```
 python main.py
@@ -64,11 +64,16 @@ python main.py
 Press `q` in the preview window to stop. Detection logs are written to `Video_Data.jsonl` and scene descriptions are appended to `Description.txt` as the session runs.
 
 ## Known limitations & Next Fixes
+
 - **Fixed batch size.** The 60-frame flush interval is a flat count, not time-based, so summary cadence shifts if processing speed varies.
 - **Single camera, single track history.** The script assumes one local camera and one continuous interaction chain; there's no support for multiple feeds or resetting context mid-session without restarting.
 - **No retry logic on LLM failures.** If a summary call errors out, that batch's data is lost rather than retried or cached for a later attempt.
--**No UI.** This runs entirely from the command line with a single OpenCV preview window, every tunable value has to be edited directly in the script.
+- **No UI.** This runs entirely from the command line with a single OpenCV preview window, every tunable value has to be edited directly in the script.
 
+## Fixes
+
+- **Token creep from chained interactions.** Fixed by dropping ID-based response chaining and instead passing the previous summary's plain text into each new prompt. Keeps request size bounded to one summary instead of growing with the whole session.
+  
 ## Motivation
 
-Watching a raw detection feed of class labels and bounding boxes doesn't tell you what's actually going on, it takes you yourself going through and providing context to create a story from the data. Since I like automating things, the next step was letting a model do the translation part... continuously: sample the feed, keep enough temporal context to notice real movement instead of noise, and produce a plain-language description of the scene as it evolves through time.
+Watching a raw detection feed of class labels and bounding boxes doesn't tell you what's actually going on, it takes you yourself going through and providing context to create a story from the data. Since I like automating things, the next step was letting a model do the translation part... continuously. The goal is to: sample the feed, keep enough temporal context to notice real movement instead of noise, and produce a plain-language description of the scene as it evolves through time.
