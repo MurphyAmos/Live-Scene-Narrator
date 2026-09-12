@@ -12,10 +12,10 @@ Instead of reading raw bounding boxes, class labels, and confidence scores off a
 2. **Detection & tracking.** Each sampled frame is run through a YOLOE segmentation/tracking model, which returns per-object class, confidence, and a persistent track ID across frames.
 3. **Frame sampling.** Not every captured frame is processed, every other frame is grabbed and discarded to reduce load, while the camera buffer is still drained each loop to avoid backlog.
 4. **Structured detection records.** For every detection above a confidence threshold (`0.2`), the script builds a JSON-serializable record: normalized center/box coordinates, corner coordinates, area, aspect ratio, and coarse horizontal/vertical region labels.
-5. **Batching.** Frame records accumulate in memory and are also appended to a `.jsonl` log file. Every 60 processed frames, the accumulated batch is flushed to the summary step and cleared.
+5. **Batching.** Frame records accumulate in memory and are also appended to `Description.jsonl`. Every 60 processed frames, the accumulated batch is flushed to the summary step and cleared.
 6. **LLM scene interpretation.** The batch is sent to a Gemini model with a detailed system prompt enforcing conservative, evidence-based interpretation, no inventing objects or actions, merging noisy or conflicting class labels into broader categories, inferring rough movement from position and box-size changes, and describing the scene in 2-5 casual sentences.
 7. **Output.** Each generated description is saved to the local vector database (`my_local_vectordb`) alongside the batch that produced it, and also becomes the `previous_scene_summary` fed into the next call, building up a running narrative of the session alongside the raw `Video_Data.jsonl` detection log.
-8. **Preview.** A live annotated preview window shows the tracked/segmented feed; pressing `q` exits the loop and closes the window.
+8. **Preview.** A live annotated preview window (enabled by default) shows the tracked/segmented feed; pressing `q` exits the loop and closes the window.
 
 # Temporal Scene-Description Design
 
@@ -61,7 +61,11 @@ Then Run:
 python main.py
 ```
 
-Press `q` in the preview window to stop. Detection logs are written to `Video_Data.jsonl` and scene descriptions are appended to `Description.txt` as the session runs.
+Press `q` in the preview window to stop. Detection logs are written to `Description.jsonl` as the session runs, and scene descriptions are saved to the local vector database.
+
+## Fixes
+
+- **Token creep from chained interactions.** Fixed by dropping ID-based response chaining and instead passing the previous summary's plain text into each new prompt. Keeps request size bounded to one summary instead of growing with the whole session.
 
 ## Known limitations & Next Fixes
 
@@ -70,10 +74,6 @@ Press `q` in the preview window to stop. Detection logs are written to `Video_Da
 - **No retry logic on LLM failures.** If a summary call errors out, that batch's data is lost rather than retried or cached for a later attempt.
 - **No UI.** This runs entirely from the command line with a single OpenCV preview window, every tunable value has to be edited directly in the script.
 
-## Fixes
-
-- **Token creep from chained interactions.** Fixed by dropping ID-based response chaining and instead passing the previous summary's plain text into each new prompt. Keeps request size bounded to one summary instead of growing with the whole session.
-  
 ## Motivation
 
-Watching a raw detection feed of class labels and bounding boxes doesn't tell you what's actually going on, it takes you yourself going through and providing context to create a story from the data. Since I like automating things, the next step was letting a model do the translation part... continuously. The goal is to: sample the feed, keep enough temporal context to notice real movement instead of noise, and produce a plain-language description of the scene as it evolves through time.
+Watching a raw detection feed of class labels and bounding boxes doesn't tell you what's actually going on, it takes you yourself going through and providing context to create a story from the data. Since I like automating things, the next step was letting a model do the translation part... continuously. The goal is simple: sample the feed, keep enough temporal context to notice real movement instead of noise, and produce a plain-language description of the scene as it evolves through time.
