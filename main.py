@@ -176,7 +176,7 @@ height = int(src_height * scale)
 def get_frame_info():
     os.system("cls" if os.name == "nt" else "clear")
     fc = 2
-    count,preview = 0, False
+    count,preview = 0, True
     frame_list = []
 
     while True:
@@ -256,7 +256,7 @@ def get_frame_info():
                     }
                     frame_data["detections"].append(detect)
                 
-            with open("demofile.jsonl", "a") as f:
+            with open("Description.jsonl", "a") as f:
                 f.write(json.dumps(frame_data) + "\n")
             frame_list.append(frame_data)
             #every 30/fc frames we generate a summary prompt for the external vector embedding 
