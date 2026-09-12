@@ -14,6 +14,7 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 model = YOLOE("yoloe-26l-seg-pf.pt")
 #set up our local db 
 memory = Memory(memory_file="./my_local_vectordb")
+os.system("cls" if os.name == "nt" else "clear")
 
 #instead of using response.id we can just input our previous summary directly into our prompt 
 previous_scene_summary = ""
@@ -174,7 +175,6 @@ width = int(src_width * scale)
 height = int(src_height * scale)
 
 def get_frame_info():
-    os.system("cls" if os.name == "nt" else "clear")
     fc = 2
     count,preview = 0, True
     frame_list = []
