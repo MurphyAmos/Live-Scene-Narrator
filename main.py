@@ -5,364 +5,166 @@ import json
 import cv2
 
 from ultralytics import YOLOE
-from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer
 
 from google import genai
+from vectordb import Memory
+
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+#more params 
+model = YOLOE("yoloe-26l-seg-pf.pt")
+#set up our local db 
+memory = Memory(memory_file="./my_local_vectordb")
+
+#instead of using response.id we can just input our previous summary directly into our prompt 
+previous_scene_summary = ""
+def prompt_summary(data_summary):
+    global previous_scene_summary
+    #response for vectordb is based upon current data with previous data as context 
+    response = client.interactions.create(
+        model="gemini-3.5-flash-lite",                            
+        system_instruction="""You are a temporal visual-scene interpretation model.
+            You will receive multiple JSON observations from the same ongoing video or live camera scene. Interpret them together over time and return a concise, natural-language description of what a human observer would most likely say is happening.
+
+            Your output will be stored in a vector database and may later be retrieved as memory for another language model. Therefore, each description must be understandable on its own, semantically informative, and useful even when retrieved without the observations that produced it.
+
+            Use previous interactions only as temporal memory. The newest observations are always the strongest evidence. Re-evaluate the scene on every call rather than blindly continuing the previous interpretation.
+
+            Each observation may contain:
 
-
-previous_interaction_id = None
-def prompt_summary(frame_list):
-    global previous_interaction_id
-
-    if previous_interaction_id == None:
-        response = client.interactions.create(
-            model="gemini-3.5-flash-lite",                            
-            system_instruction="""You are a temporal scene interpretation model.
-                You will receive multiple JSON objects representing sampled observations from a video or live camera feed.
-
-                Each JSON object is a separate observation of the same scene.
-
-                There is currently NO previous scene history or prior interpretation available.
-
-                This is the first observation batch.
-
-                Your job is to analyze all supplied observations together, determine what is most likely happening in the scene, and establish an initial natural-language scene description that can be used as temporal context for future interactions.
-
-                IMPORTANT:
-
-                * Do not invent objects, people, actions, or environmental details that are not directly detected or strongly supported by repeated evidence.
-                * Do not determine the number of observations from `frame_id`.
-                * `frame_id` may reset, repeat, or restart.
-                * Repeated frame IDs do not mean the same observation was provided twice.
-                * Use the order of the JSON objects and especially their timestamps to determine temporal progression.
-                * If multiple JSON objects are supplied, treat them as a temporal sequence.
-                * Only say that movement cannot be inferred if literally one observation was provided.
-                * Because there is no previous interaction history yet, do not claim that something has changed "since before" or compare the scene against an earlier batch.
-
-                Each observation may contain:
-
-                * `frame_id`: local frame number
-                * `timestamp`: Unix timestamp for the observation
-                * `detections`: objects detected in the observation
-                * `track_id`: temporary identifier associating an object across observations
-                * `class`: detector-predicted object class
-                * `confidence`: detector confidence
-                * `position`:
-
-                * `x`, `y`: normalized center coordinates
-                * `width`, `height`: normalized bounding-box dimensions
-
-                Interpret all observations together like a human watching a short segment of video.
-
-                Focus on:
-
-                * What people or important objects are present
-                * Which objects persist across observations
-                * What appears to be moving
-                * What appears to remain stationary
-                * Whether someone appears to shift, lean, approach, move away, enter, or leave
-                * The rough structure of the environment
-                * The most likely overall situation occurring in the camera feed
-
-                Use changes in position and bounding-box size across observations to infer rough movement.
-
-                For example:
-
-                * A person whose position changes may be moving or shifting.
-                * A person whose bounding box becomes substantially larger may be moving closer to the camera.
-                * A shrinking bounding box may suggest movement farther away.
-                * An object that remains in approximately the same position across observations is likely stationary.
-                * An object appearing near an edge and later disappearing may have moved out of view.
-
-                Spatial interpretation:
-
-                * `x` near 0 = left side
-                * `x` near 0.5 = center
-                * `x` near 1 = right side
-                * `y` near 0 = upper area
-                * `y` near 1 = lower area
-
-                Object detector labels are noisy.
-
-                Do not treat every class prediction literally.
-
-                Instead:
-
-                * Prefer objects detected repeatedly across observations.
-                * Compare location, size, and persistence when deciding whether detections refer to the same physical object.
-                * Merge semantically similar detections when they occur in approximately the same place.
-                * Ignore isolated low-confidence detections when surrounding observations do not support them.
-                * Use broader descriptions when the exact object identity is uncertain.
-
-                Examples:
-
-                * `ktv`, `television`, `tv sitcom`, or similar detections in the same area → television or display
-                * `cup`, `bowl`, `plate`, or similar detections in the same small location → small container or dish
-                * repeated overlapping `glasses` detections around a person's face → glasses
-                * fluctuating furniture labels in the same location → use the most reasonable broader furniture category
-
-                If a television or monitor remains in one location while detections within that area change over time, you may infer that the display appears to be playing changing visual content.
-
-                Be careful not to mistake a person shown on a television or monitor for another person physically present in the room when the spatial evidence suggests the detection belongs to the screen.
-
-                Infer the environment conservatively.
-
-                For example, repeated combinations of a person, bed or couch, pillow, television, desk, cup, or similar objects may suggest a bedroom, living room, office, or other indoor environment.
-
-                Use cautious wording when uncertain:
-
-                * "appears to be"
-                * "looks like"
-                * "seems to be"
-
-                Do not invent precise actions from weak evidence.
-
-                Prefer:
-
-                "A person near the camera shifts around slightly."
-
-                instead of:
-
-                "The person reaches down to pick something up."
-
-                unless the observation sequence strongly supports that specific action.
-
-                The response should sound like a human casually describing what they see, not like a computer vision report.
-
-                Prefer:
-
-                "A person is close to the camera and moves around slightly. A television is visible on the right, while the rest of the room stays mostly still."
-
-                Avoid:
-
-                "Track ID 4 demonstrates positional displacement across sampled observations."
-
-                Do not mention:
-
-                * frame IDs
-                * timestamps
-                * coordinates
-                * track IDs
-                * confidence values
-                * JSON
-                * bounding boxes
-                * processing batches
-
-                Do not narrate every detection individually.
-
-                Summarize the scene at the semantic level a human observer would care about.
-
-                Mention detector uncertainty only when it materially affects the scene interpretation.
-
-                If necessary, describe it naturally, for example:
-
-                "The exact identity of a few smaller objects is unclear because the detector's labels vary."
-
-                Your final answer should:
-
-                * Be one coherent paragraph
-                * Contain approximately 2-5 natural sentences
-                * Usually be around 40-100 words
-                * Describe the initial scene state
-                * Mention meaningful movement when supported by the observations
-                * Identify persistent parts of the environment
-                * Sound conversational and observational rather than technical
-                * Avoid pretending that any earlier scene history exists
-
-                Example style:
-
-                "A person wearing glasses is close to the camera and moves around slightly, occasionally leaning closer before shifting back. The surrounding room appears mostly stable, with what looks like a bed or couch nearby and a television on the right showing changing content. A few smaller objects remain in roughly the same places, although their exact identities are less clear."
-
-                Return ONLY the final scene description.
-
-                Do not include headings, bullet points, analysis, metadata, or explanations.
-
-            """,
-            input = f"""
-                Detection data:
-                {frame_list}
-            """,
-        )
-        previous_interaction_id=response.id
-    else:
-        response = client.interactions.create(
-            model="gemini-3.5-flash-lite",                            
-            system_instruction="""You are a temporal visual-scene interpretation model.
-                You will receive multiple JSON objects representing sampled observations from a video or live camera feed. Each JSON object is one observation of the same ongoing scene.
-
-                Your job is to interpret the detections over time and produce a short, natural description of what a person watching the camera feed would most likely say is happening.
-
-                Use previous interactions only as temporal memory. The newest detection batch is always the strongest source of evidence.
-
-                For every new batch:
-
-                * Analyze all supplied observations together as a temporal sequence.
-                * Re-evaluate the current scene from the new data instead of blindly continuing the previous summary.
-                * Compare the current observations with previous scene context.
-                * Update your interpretation when people, objects, positions, movement, visibility, or the environment change.
-                * Preserve useful previous context when the current observations still support it.
-                * Give substantially more weight to the current batch than to older interaction history.
-
-                The input observations may contain:
-
-                * `frame_id`: local frame number that may reset, repeat, or restart
-                * `timestamp`: Unix timestamp for the observation
-                * `detections`: objects detected in that observation
-                * `track_id`: temporary identifier used to associate an object across observations
-                * `class`: detector-predicted object class
-                * `confidence`: detector confidence
-                * `position`:
-
-                * `x`, `y`: normalized center coordinates
-                * `width`, `height`: normalized bounding-box dimensions
-
-                Important temporal rules:
-
-                1. Use observation order and timestamps to determine temporal progression.
-                2. Do NOT infer the number of observations from `frame_id`.
-                3. Repeated or reset frame IDs do not mean observations are duplicates.
-                4. If multiple JSON objects are provided, treat them as a temporal sequence.
-                5. Only state that movement cannot be inferred when literally one observation is available.
-                6. `track_id` may help associate detections across observations, but it is temporary and should not be treated as permanent identity.
-
-                Interpret the data like a human observer, not like a machine reading a detection log.
-
-                Focus on questions such as:
-
-                * Who or what appears to be in the scene?
-                * What seems to be moving?
-                * What remains stationary?
-                * Is someone approaching, moving away, leaning, shifting, entering, or leaving?
-                * What objects appear to be part of the surrounding environment?
-                * Has anything meaningful changed since the previous interpretation?
-                * What is the most likely overall situation?
-
-                Use changes in object position and bounding-box size to infer rough movement when supported by multiple observations.
-
-                For example:
-
-                * A changing person position may indicate that they are moving or shifting.
-                * A rapidly increasing bounding-box size may suggest that something is getting closer to the camera.
-                * A decreasing bounding-box size may suggest that it is moving farther away.
-                * A persistent object in approximately the same location is probably stationary.
-                * An object appearing near an image boundary and then disappearing may have left the visible scene.
-
-                Spatial interpretation:
-
-                * `x` near 0 means the left side of the image.
-                * `x` near 0.5 means near the center.
-                * `x` near 1 means the right side.
-                * `y` near 0 means the upper part of the image.
-                * `y` near 1 means the lower part.
-
-                Object detector outputs are noisy.
-
-                Do not treat every predicted class literally.
-
-                Instead:
-
-                * Look for repeated detections across observations.
-                * Look at whether detections occupy approximately the same location.
-                * Merge semantically similar or conflicting labels when they likely represent the same physical object.
-                * Prefer persistent evidence over isolated detections.
-                * Ignore isolated low-confidence detections unless other evidence supports them.
-                * Do not invent an object merely because it would make the scene make sense.
-
-                Examples of reasonable semantic merging:
-
-                * `television`, `ktv`, `tv sitcom`, or similar labels in the same area → television/display
-                * `cup`, `bowl`, `plate`, or similar uncertain labels in the same small area → cup/container/dish
-                * repeated overlapping `glasses` detections around a person's face → glasses
-                * slightly changing labels on the same persistent furniture object → describe the broader furniture category instead of repeatedly changing its identity
-
-                When a television or monitor remains in one location while detections inside or around it repeatedly change, you may infer that the display is showing changing visual content. Do not mistake people visible on a screen for people physically present in the room when the spatial evidence suggests they belong to the display.
-
-                Infer the type of environment conservatively.
-
-                For example, combinations such as a person, couch or bed, pillow, television, desk, cup, or similar persistent household objects may suggest a bedroom, living room, office, or other indoor living space. Use phrases such as "appears to be" or "looks like" when the environment is uncertain.
-
-                Do not overstate precise actions.
-
-                For example, prefer:
-
-                "A person near the camera shifts around and appears to lean slightly to one side."
-
-                instead of:
-
-                "The person bends down to pick something up."
-
-                unless the detections strongly support the specific action.
-
-                Your response should sound like a human casually describing what they see.
-
-                Prefer language such as:
-
-                "A person is sitting close to the camera and moving around slightly. A television is visible on the right and appears to be playing something, while the rest of the room stays mostly unchanged."
-
-                Avoid robotic language such as:
-
-                "Object track 3 demonstrates significant positional displacement."
-
-                Do not mention:
-
-                * frame IDs
-                * timestamps
-                * coordinates
-                * track IDs
-                * confidence scores
-                * JSON
-                * bounding boxes
-                * detection batches
-
-                unless explicitly asked.
-
-                Do not narrate every detected object. Mention only objects that help explain the scene.
-
-                Do not automatically mention detector instability. Only mention it when conflicting labels materially affect the interpretation. When necessary, describe it naturally, for example:
-
-                "The exact identity of some smaller objects is unclear because the detector's labels vary."
-
-                Do not repeat the previous summary word-for-word unless the current observations genuinely indicate that nothing meaningful has changed.
-
-                When the scene is mostly unchanged, naturally describe the small changes instead of simply saying that the scene is unchanged.
-
-                Your final answer should:
-
-                * Be one coherent paragraph.
-                * Normally contain 2-5 natural sentences.
-                * Usually be about 40-100 words.
-                * Prioritize what a human observer would find important.
-                * Clearly describe meaningful movement or changes when present.
-                * Be confident when evidence is consistent and cautious when evidence is ambiguous.
-                * Sound conversational and observational rather than technical.
-
-                Example style:
-
-                "A person wearing glasses is close to the camera and shifts around slightly, occasionally leaning closer before moving back. The surrounding room stays mostly stable, with what looks like a couch or bed nearby and a television on the right showing changing content. A few smaller objects remain in roughly the same places, although their exact identities are less clear."
-
-                Return ONLY the final scene description.
-
-                Do not include headings, bullet points, analysis, metadata, or explanations.
-
-            """,
-            previous_interaction_id=previous_interaction_id,
-            input = f"""
-                Detection data:
-                {frame_list}
-            """,
-        )
-        previous_interaction_id=response.id        
+            * `frame_id`: local frame number; may reset or repeat
+            * `timestamp`: observation time
+            * `detections`
+            * `track_id`: temporary object association
+            * `class`: detector label
+            * `confidence`
+            * `position`: normalized `x`, `y`, `width`, `height`
+
+            Temporal reasoning:
+
+            * Use observation order and timestamps to determine progression.
+            * Never infer sequence length from `frame_id`.
+            * Repeated or reset frame IDs do not imply duplicate observations.
+            * Use `track_id` only as a temporary object association, not permanent identity.
+            * When multiple observations exist, compare position and apparent size to infer rough movement.
+            * Increasing apparent size may indicate movement toward the camera.
+            * Decreasing apparent size may indicate movement away from the camera.
+            * A change in horizontal or vertical position may indicate movement across the scene.
+            * Objects remaining in roughly the same location over several observations are probably stationary.
+            * Objects appearing near an image edge and later disappearing may have exited the visible scene.
+            * Objects newly appearing from an edge may have entered the visible scene.
+            * Only say that movement cannot be determined when exactly one observation is available.
+
+            Spatial interpretation:
+
+            * `x ≈ 0`: left side
+            * `x ≈ 0.5`: center
+            * `x ≈ 1`: right side
+            * `y ≈ 0`: upper image
+            * `y ≈ 1`: lower image
+
+            Detector outputs are noisy. Interpret persistent patterns rather than individual predictions:
+
+            * Prefer repeated and persistent detections over isolated ones.
+            * Ignore isolated low-confidence detections unless supported elsewhere.
+            * Merge overlapping or semantically similar labels when they likely refer to the same physical object.
+            * Normalize fluctuating labels into a stable broader category whenever possible.
+            * Never invent objects merely to make the scene coherent.
+
+            Examples:
+
+            * `television`, `ktv`, `tv sitcom`, and similar labels in one fixed area → television/display
+            * `cup`, `bowl`, `plate`, and similar overlapping labels → container/dish when the exact type is unclear
+            * repeated `glasses` detections around a person's face → glasses
+            * changing furniture labels in one stable location → use the most defensible broader furniture category
+
+            If a television or monitor stays fixed while detections within its area change, infer that the display may be showing changing visual content. Do not mistake people or objects shown on a screen for physical objects in the room when the spatial evidence suggests they belong to the display.
+
+            Infer environments conservatively. Persistent combinations such as a person, couch, bed, pillow, television, desk, chair, computer, or cup may suggest an indoor living or work space. Use cautious phrasing such as "appears to be" when the environment is uncertain.
+
+            Describe actions conservatively. Prefer descriptions such as:
+
+            "A person near the camera shifts position and leans slightly."
+
+            Do not claim a specific action such as picking something up, speaking, eating, opening something, or interacting with another object unless the observations strongly support it.
+
+            Vector-memory requirements:
+
+            * Make every description understandable without needing the previous summary.
+            * Explicitly name important entities instead of relying heavily on pronouns.
+            * Prefer stable, concrete terminology such as "person", "television", "chair", "vehicle", or "bicycle".
+            * Use the same general term for the same type of object whenever possible.
+            * Naturally include the likely environment when it is reasonably supported.
+            * Include meaningful spatial information such as left, center, right, foreground, or background when useful.
+            * Include important temporal changes such as entering, leaving, approaching, moving away, crossing the scene, shifting, appearing, or disappearing.
+            * Mention important stationary context when it helps identify the scene later.
+            * Preserve distinctive details that could make this memory useful for semantic retrieval.
+            * Avoid vague references such as "it", "that thing", "something", "they", or "there" when the referenced object can instead be named clearly.
+            * Avoid filler, unnecessary adjectives, speculation, storytelling, or poetic language.
+            * Do not repeat long lists of detected objects.
+            * Do not write keywords, tags, database metadata, headings, or structured fields. Encode useful retrieval information naturally into the prose.
+
+            When previous scene state:
+
+
+            * Use it to understand continuity and longer-term changes.
+            * Do not assume old information is still true when the newest observations contradict it.
+            * Retain older scene details only when the newest evidence still supports them.
+            * Prefer describing what is currently happening while briefly preserving meaningful changes from the immediate past.
+            * If a previously important object or person is no longer visible, mention that it appears to have left only when the observations support that conclusion.
+
+            Focus on:
+
+            * the likely environment
+            * important people or objects currently present
+            * meaningful movement or changes
+            * entry, exit, approach, retreat, crossing, leaning, or shifting
+            * important stationary scene elements
+            * meaningful changes relative to recent context
+            * the likely overall situation
+
+            Do not narrate every detected object.
+
+            Do not mention frame IDs, timestamps, coordinates, track IDs, confidence values, JSON, bounding boxes, vector databases, embeddings, detection batches, or the interpretation process unless explicitly asked.
+
+            Do not discuss detector instability unless it materially affects what can reasonably be concluded.
+
+            Output rules:
+
+            * Return ONLY the scene description.
+            * Return one coherent paragraph.
+            * Usually use 2-5 sentences and approximately 50-120 words.
+            * Make the paragraph self-contained.
+            * Use concrete nouns and clear actions.
+            * Sound conversational and observational rather than technical.
+            * Give more weight to the newest observations than older context.
+            * Preserve older context only when the new observations continue to support it.
+            * Do not repeat the previous description verbatim unless essentially nothing has changed.
+            * Prefer information-rich sentences over unnecessary verbosity.
+
+        """,
+        input = f"""
+            Previous scene state:
+            {previous_scene_summary}
+
+            New observations:
+            {data_summary}
+
+            Update the scene description based on the new observations.
+            """
+    )
+    #load response into memory as a "previous response" for next prompt context
+    previous_scene_summary = response.output_text
+    #load scence context into external vectordb
+    memory.save(previous_scene_summary, data_summary)
     return response
 
-model = YOLOE("yoloe-26s-seg-pf.pt")
 camera = cv2.VideoCapture(0)
 #get resolution    
 src_width = camera.get(cv2.CAP_PROP_FRAME_WIDTH)
 src_height = camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
 #force scale each video...
-target_max = 360
+target_max = 240
 ##if width is bigger go on width else go on height for verticle
 if src_width >= src_height:
     scale = target_max / src_width
@@ -372,19 +174,18 @@ width = int(src_width * scale)
 height = int(src_height * scale)
 
 def get_frame_info():
+    os.system("cls" if os.name == "nt" else "clear")
     fc = 2
-    count,preview = 0, True
+    count,preview = 0, False
     frame_list = []
-    
+
     while True:
         count+=1
-        #skip frames until nth frame
         if count % fc != 0:
             success = camera.grab()
             if not success:
                 break
             continue
-        #process every nth frame
         success, frame = camera.read()
         #if we get a frame
         if success:
@@ -412,7 +213,7 @@ def get_frame_info():
                     
                     area = w * h
                     aspect_ratio = w / h if h != 0 else 0
-                    #load frame metadata json struct into frame_data
+
                     detect = {
                         "track_id": (
                             int(result.boxes.id[i].item())
@@ -454,24 +255,16 @@ def get_frame_info():
                         }
                     }
                     frame_data["detections"].append(detect)
-            #load current frame_data line into list
-            frame_list.append(frame_data)
-            #write current frame to jsaon file
-            with open("Video_Data.jsonl", "a") as f:
+                
+            with open("demofile.jsonl", "a") as f:
                 f.write(json.dumps(frame_data) + "\n")
-            if count % 60 == 0:
-                ##wait till theres "60"/fc frames in frame list.
-                #put last 60/fc frame meta data into model, if last frame input exist, use recent history as refrence for recent input 
+            frame_list.append(frame_data)
+            #every 30/fc frames we generate a summary prompt for the external vector embedding 
+            if count % 30 == 0:
                 y = prompt_summary(frame_list).output_text
-                print("\n" + "=" * 50)
-                print("LIVE SCENE INTERPRETATION")
-                print("=" * 50)
-                print(y)
-                print()
-                with open("Description.txt", "a") as f:
-                    f.write(y+"\n\n\n")
-                #clear for next pass of 60 frames
+                #clear for a new batch of frame data
                 frame_list.clear()  
+        #preview, if q is pressed release
         if preview:
             cv2.imshow("YOLOE Segmentation",results[0].plot())
             if cv2.waitKey(1) & 0xFF in (ord('q'), ord('Q')):                
