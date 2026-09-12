@@ -175,10 +175,11 @@ width = int(src_width * scale)
 height = int(src_height * scale)
 
 def get_frame_info():
-    fc = 2
-    count,preview = 0, True
+    #frame count for frame skipping, starting count of frames
+    fc,count = 2, 0
+    preview = True
+    
     frame_list = []
-
     while True:
         count+=1
         if count % fc != 0:
